@@ -1,0 +1,14 @@
+# Ignore saved models and checkpoints
+*.keras
+*.h5
+checkpoints/
+__pycache__/
+.ipynb_checkpoints/
+
+# Ignore test image data
+digits/
+*.png
+
+# Ignore virtual environments
+.venv/
+.env/
