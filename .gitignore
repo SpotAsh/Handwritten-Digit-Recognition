@@ -4,6 +4,8 @@
 checkpoints/
 __pycache__/
 .ipynb_checkpoints/
+eq_input/
+eq_output/
 
 # Ignore test image data
 digits/
