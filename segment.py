@@ -6,99 +6,99 @@ def segment_equation_image(image_path, debug=False, return_full_image=False):
     """
     Load an equation image, preprocess it, find contours of symbols,
     crop each symbol with padding, and return list of normalized numpy arrays at original sizes.
-    
-    Args:
-        image_path (str): Path to the input image
-        debug (bool): If True, saves intermediate processing images for debugging
-        return_full_image (bool): If True, also returns the full processed grayscale image
-    
-    Returns:
-        list or tuple: 
-            - If return_full_image=False: List of numpy arrays (original cropped sizes) with pixel values normalized to [0,1] as float32
-            - If return_full_image=True: Tuple of (symbol_list, full_grayscale_image)
     """
+
+    # 1. Load image in grayscale
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise ValueError(f"Could not read image {image_path}")
 
-    # Invert colors: digits should be white on black background
+    # 2. Invert colors: digits should be white, background black
     img = cv2.bitwise_not(img)
 
-    # Apply adaptive threshold to get binary image
+    if debug:
+        cv2.imwrite("debug_inverted.png", img)
+        print("Saved debug_inverted.png (white symbols, black background)")
+
+    # 3. Adaptive thresholding → binary image
     thresh = cv2.adaptiveThreshold(img, 255,
                                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                   cv2.THRESH_BINARY, 17, 2)
-    
-    # Apply morphological operations to improve symbol connectivity
-    # First, use a smaller kernel for closing small gaps
-    kernel_small = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_small)
-    
-    # Then use a larger kernel for more aggressive closing of digit parts
-    kernel_large = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_large)
-    
-    # Optional: Save debug images to see intermediate results
+                                   cv2.THRESH_BINARY, 17, 5)
+
     if debug:
-        cv2.imwrite('debug_inverted.png', img)
-        cv2.imwrite('debug_thresholded.png', thresh)
-    
-    # Keep a copy of the processed grayscale image at original size for return if requested
+        cv2.imwrite("debug_thresholded.png", thresh)
+        print("Saved debug_thresholded.png (binary result after thresholding)")
+
+    # 4. Morphological closing to connect broken strokes  - skip for now
+    #kernel_small = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    #thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_small)
+#
+    #kernel_large = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3))
+    #thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_large)
+
+    if debug:
+        cv2.imwrite("debug_after_morph.png", thresh)
+        print("Saved debug_after_morph.png (after morphology ops)")
+
+    # Keep a copy of processed grayscale (for return if requested)
     full_processed_image = img.copy()
 
-
-    # Find contours of connected components (symbols)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL,
+    # 5. Find contours (external → only outer shapes)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_TREE,
                                    cv2.CHAIN_APPROX_SIMPLE)
+    print(f"[INFO] Total contours found: {len(contours)}")
 
     symbol_images = []
 
-    # Check if any contours were found
     if not contours:
         print("Warning: No contours found in the image")
         return symbol_images
 
     # Collect bounding boxes for all contours
     bounding_boxes = [cv2.boundingRect(c) for c in contours]
-    
-    # Filter and merge nearby bounding boxes that might be parts of the same digit
-    merged_boxes = merge_nearby_boxes(bounding_boxes, img.shape)
-    
-    # Sort bounding boxes left to right (by x coordinate)
-    merged_boxes = sorted(merged_boxes, key=lambda b: b[0])
-    
-    if debug:
-        print(f"Original contours: {len(bounding_boxes)}, After merging: {len(merged_boxes)}")
 
+    # 🚨 Skip merging for now — just use raw boxes
+    merged_boxes = sorted(bounding_boxes, key=lambda b: b[0])
+
+
+    # 9. Crop and normalize each symbol
     for (x, y, w, h) in merged_boxes:
-        # Filter out contours smaller than 5 pixels in width or height (noise removal)
+        # Debug: Show bounding box info
+        if debug:
+            print(f"Box: x={x}, y={y}, w={w}, h={h}")
+
+        # Filter tiny noise (can tweak this if digits are small)
         if w < 5 or h < 5:
+            if debug:
+                print(" → Skipped (too small, likely noise)")
             continue
 
-        # Add 3-pixel padding around the bounding box to avoid partial crops
-        # Ensure padding doesn't go outside image boundaries
+
+        # Add 3px padding (prevent cutting edges)
         img_height, img_width = img.shape
         x_padded = max(0, x - 3)
         y_padded = max(0, y - 3)
-        w_padded = min(img_width - x_padded, w + 6)  # +6 for 3 pixels on each side
-        h_padded = min(img_height - y_padded, h + 6)  # +6 for 3 pixels on each side
-        
-        # Crop the symbol with padding from the original inverted image
+        w_padded = min(img_width - x_padded, w + 6)
+        h_padded = min(img_height - y_padded, h + 6)
+
+        # Crop from the inverted grayscale image
         symbol_crop = img[y_padded:y_padded+h_padded, x_padded:x_padded+w_padded]
 
-        # Normalize pixel values to range [0,1] as float32 (keeping original size)
+        # Normalize to [0,1]
         symbol_normalized = symbol_crop.astype(np.float32) / 255.0
-
         symbol_images.append(symbol_normalized)
 
-    # Return based on what was requested
+        if debug:
+            cv2.imwrite(f"debug_symbol_{len(symbol_images)}.png", symbol_crop)
+            print(f"Saved debug_symbol_{len(symbol_images)}.png")
+
+    # 10. Return symbols + full image (if requested)
     if return_full_image:
-        # Return both the symbol list and the full processed grayscale image
-        # Normalize the full image to [0,1] range as float32 for consistency
         full_normalized = full_processed_image.astype(np.float32) / 255.0
         return symbol_images, full_normalized
     else:
         return symbol_images
+
 
 
 def merge_nearby_boxes(bounding_boxes, img_shape, horizontal_threshold=10, vertical_overlap_threshold=0.3):
